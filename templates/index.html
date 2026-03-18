@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>온라인 청력검사</title>
+<style>
+body { font-family: sans-serif; text-align:center; }
+button { padding:12px 24px; margin:10px; font-size:18px; }
+table { margin:20px auto; border-collapse: collapse; }
+td, th { border:1px solid #333; padding:8px; }
+</style>
+</head>
+<body>
+
+<h2>온라인 청력 스크리닝</h2>
+<p>이어폰 착용 후 편한 볼륨으로 맞추세요</p>
+
+<button onclick="startTest()">검사 시작</button>
+<button onclick="startCalibration()">볼륨 테스트</button>
+
+<h3 id="status"></h3>
+
+<div id="testArea" style="display:none;">
+    <button onclick="respond(true)">들림</button>
+    <button onclick="respond(false)">안들림</button>
+</div>
+
+<div id="result"></div>
+
+<script>
+const freqs = [1000, 2000, 4000, 6000, 500, 250];
+let earList = ["right", "left"];
+
+let earIndex = 0;
+let freqIndex = 0;
+let currentDb = 50;
+let history = [];
+let results = { right:{}, left:{} };
+
+let calibrationOn = false;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTone(freq, db, ear){
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const pan = audioCtx.createStereoPanner();
+
+    osc.frequency.value = freq;
+    gain.gain.value = Math.pow(10, db / 40);
+    pan.pan.value = ear === "left" ? -1 : 1;
+
+    osc.connect(gain).connect(pan).connect(audioCtx.destination);
+    osc.start();
+
+    setTimeout(()=> osc.stop(), 1000);
+}
+
+// ===== 볼륨 테스트 =====
+function startCalibration(){
+    calibrationOn = true;
+    playCalibration();
+}
+
+function playCalibration(){
+    if(!calibrationOn) return;
+    playTone(1000, 40, "right"); // 고정 톤
+    setTimeout(playCalibration, 1200);
+}
+
+// ===== 검사 시작 =====
+function startTest(){
+    calibrationOn = false;
+
+    document.getElementById("testArea").style.display = "block";
+    earIndex = 0;
+    freqIndex = 0;
+    currentDb = 50;
+    history = [];
+    results = { right:{}, left:{} };
+
+    nextTone();
+}
+
+function nextTone(){
+    let ear = earList[earIndex];
+    let freq = freqs[freqIndex];
+
+    document.getElementById("status").innerText =
+        `${ear} / ${freq}Hz / ${currentDb}dB`;
+
+    playTone(freq, currentDb, ear);
+}
+
+function respond(heard){
+    history.push({db: currentDb, heard: heard});
+
+    let sameDb = history.filter(h => h.db === currentDb);
+    let heardCount = sameDb.filter(h => h.heard).length;
+
+    if(sameDb.length >= 3){
+        if(heardCount >= 2){
+            let ear = earList[earIndex];
+            let freq = freqs[freqIndex];
+
+            results[ear][freq] = currentDb;
+
+            freqIndex++;
+            currentDb = 50;
+            history = [];
+
+            if(freqIndex >= freqs.length){
+                earIndex++;
+                freqIndex = 0;
+
+                if(earIndex >= earList.length){
+                    showResult();
+                    return;
+                }
+            }
+        }
+    }
+
+    if(heard){
+        currentDb -= 10;
+    }else{
+        currentDb += 5;
+    }
+
+    setTimeout(nextTone, 400);
+}
+
+// ===== 6분법 계산 =====
+function calc6(ear){
+    let r = results[ear];
+
+    let v500 = r[500] ?? 0;
+    let v1000 = r[1000] ?? 0;
+    let v2000 = r[2000] ?? 0;
+    let v4000 = r[4000] ?? 0;
+
+    return Math.round((v500 + v1000*2 + v2000*2 + v4000) / 6);
+}
+
+function getLevel(db){
+    if(db <= 20) return "정상";
+    if(db <= 40) return "경도난청";
+    if(db <= 60) return "중도난청";
+    if(db <= 90) return "고도난청";
+    return "심도난청";
+}
+
+function showResult(){
+    let html = "<h3>검사 결과</h3>";
+    html += "<table><tr><th>주파수</th><th>우측</th><th>좌측</th></tr>";
+
+    freqs.forEach(f=>{
+        let r = results.right[f] ?? "-";
+        let l = results.left[f] ?? "-";
+
+        html += `<tr>
+            <td>${f}Hz</td>
+            <td>${r} (${getLevel(r)})</td>
+            <td>${l} (${getLevel(l)})</td>
+        </tr>`;
+    });
+
+    html += "</table>";
+
+    // ===== 6분법 결과 =====
+    let rightAvg = calc6("right");
+    let leftAvg = calc6("left");
+
+    html += `<h3>
+    6분법 결과<br>
+    우측: ${rightAvg} dB (${getLevel(rightAvg)})<br>
+    좌측: ${leftAvg} dB (${getLevel(leftAvg)})
+    </h3>`;
+
+    html += "<br><b>난청 기준</b><br>";
+    html += "정상 ~20 / 경도 20~40 / 중도 41~60 / 고도 61~90 / 심도 90이상";
+
+    // ===== 상담 링크 =====
+    html += `<br><br>
+    <button onclick="window.location.href='https://docs.google.com/forms/d/1HGGjCmMlAgjjOboSObxn7pmWLCSUgS25LCv0VOetVHg/edit'">
+    무료 상담 받기
+    </button>`;
+
+    document.getElementById("result").innerHTML = html;
+}
+</script>
+
+</body>
+</html>
